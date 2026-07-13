@@ -237,6 +237,49 @@ hcloud firewall list
 hcloud firewall describe <firewall-id>
 ```
 
+## Importing Existing Firewalls
+
+Firewalls created outside Terraform (e.g. via the Hetzner Cloud Console) can be imported into this module with an [`import` block](https://developer.hashicorp.com/terraform/language/import). Inspect the live firewall with `hcloud firewall describe <firewall-id> -o json`, mirror it in the module input, then verify the first plan shows no changes:
+
+```hcl
+module "firewall" {
+  source  = "danylomikula/firewall/hcloud"
+  version = "~> 1.0"
+
+  firewalls = {
+    # Key matches the live firewall name — the module sets `name`
+    # from the key unless `name` is set explicitly.
+    legacy-web = {
+      rules = [
+        {
+          direction   = "in"
+          protocol    = "tcp"
+          port        = "443"
+          source_ips  = ["0.0.0.0/0", "::/0"]
+          description = "https traffic"
+        }
+      ]
+    }
+  }
+}
+
+# Import the firewall by its ID.
+import {
+  to = module.firewall.hcloud_firewall.this["legacy-web"]
+  id = "1234567"
+}
+```
+
+**Import checklist**:
+
+1. Use the real firewall name as the key in `firewalls` (or set `name` explicitly) — a different key renames the firewall.
+2. Mirror the live rules exactly. Rule order does not matter: the provider models rules as an unordered set, and Hetzner applies them as a flat allow-list. Any *content* difference, however, shows up as a paired remove+add of the whole rule — Terraform tracks set elements by their content hash.
+3. Write IPs as canonical CIDRs (`10.0.0.0/16`, `::/0`). Since provider v1.46.0, bare IPs are normalized to `/32` and `/128` and IPv6 is minimized automatically, so non-canonical input no longer causes perpetual diffs.
+4. Omit `port` for portless protocols (`icmp`, `gre`, `esp`); an empty string is equivalent to omitting it.
+5. Make sure `common_labels` merged with the firewall's `labels` matches the live labels — a mismatch is only a harmless in-place update, but it keeps the first plan from being clean.
+
+**Server attachments**: the module never sets `apply_to`, so attachments imported with the firewall stay in state untouched — the provider only reconciles `apply_to` when it is declared in configuration. Keep managing attachments outside the module, via `firewall_ids` on the server resource or a separate [`hcloud_firewall_attachment`](https://registry.terraform.io/providers/hetznercloud/hcloud/latest/docs/resources/firewall_attachment) resource.
+
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
